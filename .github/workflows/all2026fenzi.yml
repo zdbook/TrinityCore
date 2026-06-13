@@ -1,0 +1,109 @@
+name: TrinityCore Full Build (VS2026)
+
+on:
+  push:
+    branches: [ "master" ]
+  pull_request:
+    branches: [ "master" ]
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: 'Select branch to build'
+        required: true
+        default: 'master'
+        type: choice
+        options:
+          - master
+          - 3.3.5
+          - '3.3.5-without-updates'
+          - 'cataclysm'
+          - 'legion'
+          # 如果需要其他分支，可以继续添加
+      custom_branch:
+        description: 'Or enter a custom branch name (overrides above)'
+        required: false
+        type: string
+
+env:
+  BUILD_TYPE: Release
+  VCPKG_COMMIT_ID: 6a52dc6bdb32acb3be059a530c0cfd4d019e0a0c
+
+jobs:
+  build:
+    runs-on: windows-2025
+    steps:
+    - name: Determine branch to checkout
+      id: branch
+      shell: bash
+      run: |
+        if [ -n "${{ github.event.inputs.custom_branch }}" ]; then
+          BRANCH="${{ github.event.inputs.custom_branch }}"
+        else
+          BRANCH="${{ github.event.inputs.branch || 'master' }}"
+        fi
+        echo "branch=$BRANCH" >> $GITHUB_OUTPUT
+        echo "Using branch: $BRANCH"
+
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ steps.branch.outputs.branch }}
+        submodules: 'recursive'
+        fetch-depth: 0
+
+    - name: Set reusable strings
+      id: strings
+      shell: bash
+      run: |
+        echo "build-output-dir=${{ github.workspace }}/build" >> "$GITHUB_OUTPUT"
+        echo "date-time=$(date +'%Y%m%d_%H%M%S')" >> "$GITHUB_OUTPUT"
+
+    - name: Setup vcpkg
+      uses: actions/checkout@v4
+      with:
+        repository: microsoft/vcpkg
+        path: 'c:/vcpkg'
+        ref: ${{ env.VCPKG_COMMIT_ID }}
+
+    - name: Install dependencies via vcpkg
+      run: |
+        .\vcpkg\vcpkg install --triplet x64-windows-static `
+          boost-system boost-filesystem boost-program-options boost-iostreams boost-regex boost-thread `
+          openssl mysql-connector-cpp bzip2 zlib liblzma
+
+    - name: Setup MSVC Developer Command Prompt (VS 2026)
+      uses: ilammy/msvc-dev-cmd@v1
+      with:
+        arch: x64
+        toolset: 18.0
+
+    - name: Configure CMake
+      run: |
+        cmake -S ${{ github.workspace }} -B ${{ steps.strings.outputs.build-output-dir }} `
+          -GNinja -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} `
+          -DTOOLS=1 -DSCRIPTS=1 -DWITH_WARNINGS=1 `
+          -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake `
+          -DVCPKG_TARGET_TRIPLET=x64-windows-static `
+          -DOPENSSL_ROOT_DIR=C:/vcpkg/installed/x64-windows-static `
+          -DOPENSSL_USE_STATIC_LIBS=ON `
+          -DMYSQL_LIBRARY=C:/vcpkg/installed/x64-windows-static/lib/mysqlcppconn-static.lib
+      shell: cmd
+
+    - name: Build Project
+      run: cmake --build ${{ steps.strings.outputs.build-output-dir }} --config ${{ env.BUILD_TYPE }} --parallel
+
+    - name: Package Artifacts
+      shell: bash
+      run: |
+        cd ${{ steps.strings.outputs.build-output-dir }}/bin/${{ env.BUILD_TYPE }}
+        mkdir -p ${{ github.workspace }}/package
+        cp *.exe ${{ github.workspace }}/package/ 2>/dev/null || true
+        cp *.dll ${{ github.workspace }}/package/ 2>/dev/null || true
+        cp ${{ github.workspace }}/contrib/extractor.bat ${{ github.workspace }}/package/ 2>/dev/null || true
+
+    - name: Upload Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: TrinityCore_${{ steps.branch.outputs.branch }}_${{ steps.strings.outputs.date-time }}
+        path: ${{ github.workspace }}/package
+        compression-level: 9
