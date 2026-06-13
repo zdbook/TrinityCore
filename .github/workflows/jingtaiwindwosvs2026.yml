@@ -1,0 +1,64 @@
+name: Windows x64 (Static)
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: windows-2025-vs2026
+    env:
+      CMAKE_BUILD_TYPE: RelWithDebInfo
+      MYSQL_ROOT_DIR: C:/Program Files/MySQL/MySQL Server 8.0
+    steps:
+    - uses: actions/checkout@v5
+
+    - name: Set reusable strings
+      id: strings
+      shell: bash
+      run: |
+        echo "build-output-dir=${{ github.workspace }}/build" >> "$GITHUB_OUTPUT"
+
+    - name: Install dependencies via vcpkg (static)
+      run: |
+        vcpkg install boost:x64-windows-static
+        vcpkg install openssl:x64-windows-static
+        vcpkg install bzip2:x64-windows-static
+        vcpkg install zlib:x64-windows-static
+
+    - name: Initialize Visual Studio Environment
+      uses: egor-tensin/vs-shell@v2
+      with:
+        arch: x64
+        vsversion: 18.0
+
+    - name: Configure CMake (static runtime)
+      run: >
+        cmake -GNinja -S ${{ github.workspace }} -B ${{ steps.strings.outputs.build-output-dir }}
+        -DWITH_WARNINGS_AS_ERRORS=ON -DTOOLS=ON
+        -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake
+        -DVCPKG_TARGET_TRIPLET=x64-windows-static
+        -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
+        -DOPENSSL_USE_STATIC_LIBS=ON
+        -DBOOST_USE_STATIC_LIBS=ON
+
+    - name: Build
+      run: |
+        cmake --build ${{ steps.strings.outputs.build-output-dir }}
+
+    - name: Copy MySQL DLL (only dynamic dependency)
+      run: |
+        cd ${{ steps.strings.outputs.build-output-dir }}/bin/${{ env.CMAKE_BUILD_TYPE }}
+        copy "${{ env.MYSQL_ROOT_DIR }}/lib/libmysql.dll" libmysql.dll
+
+    - name: Check binaries
+      run: |
+        cd ${{ steps.strings.outputs.build-output-dir }}/bin/${{ env.CMAKE_BUILD_TYPE }}
+        ./bnetserver --version
+        ./worldserver --version
+
+    - name: Upload Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        path: ${{ steps.strings.outputs.build-output-dir }}/bin/${{ env.CMAKE_BUILD_TYPE }}
+        name: TrinityCoreMasterWin64VS2026_Static
