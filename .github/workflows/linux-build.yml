@@ -76,3 +76,13 @@ jobs:
         cd ${{ github.workspace }}/check_install/bin
         ./bnetserver --version
         ./worldserver --version
+    # 新增：打包产物并上传
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        # 使用矩阵中的编译器和PCH设置来区分不同构建的产物
+        name: build-${{ matrix.cc }}-pch${{ matrix.pch }}
+        # 打包整个安装目录（包含 bin、lib、share 等）
+        path: ${{ github.workspace }}/check_install
+        # 如果只想打包可执行文件，可以使用 ${{ github.workspace }}/check_install/bin
+        # 如果希望保留目录结构，path 直接指向 check_install 即可
